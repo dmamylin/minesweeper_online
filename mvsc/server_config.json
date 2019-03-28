@@ -1,0 +1,5 @@
+{
+    "game_port": 8800,
+    "admin_port": 1234,
+    "max_player_connections": 2
+}
