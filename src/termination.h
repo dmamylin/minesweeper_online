@@ -4,7 +4,7 @@ class ITerminationListener {
 public:
     virtual ~ITerminationListener() = default;
 
-    virtual void OnTermination() = 0;
+    virtual void OnTerminate() = 0;
 };
 
 class ITerminationController {

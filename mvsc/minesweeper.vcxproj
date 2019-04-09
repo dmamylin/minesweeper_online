@@ -125,6 +125,7 @@
     <ClCompile Include="..\src\main.cpp" />
     <ClCompile Include="..\src\server_config.cpp" />
     <ClCompile Include="..\src\util\log.cpp" />
+    <ClCompile Include="..\src\util\string.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\admin_connection_manager.h" />

@@ -1,6 +1,8 @@
 #include "admin_connection_manager.h"
 
 #include "util/log.h"
+#include "util/maybe.h"
+#include "util/string.h"
 
 #include <Poco/Net/NetException.h>
 #include <Poco/Net/TCPServer.h>
@@ -8,7 +10,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
-#include <string_view>
 #include <vector>
 
 using namespace Poco::Net;
@@ -121,22 +122,24 @@ public:
     }
 
     void run() override {
-        bool isOpen = true;
         Log().Info() << "New admin connection from: " << Socket.peerAddress().toString();
-        while (isOpen) {
+        while (IsOpen) {
             try {
                 auto bytesReceived = ReceiveBytes();
                 if (bytesReceived <= 0) {
-                    isOpen = false;
+                    IsOpen = false;
                 } else {
-                    OnReceive(static_cast<size_t>(bytesReceived));
+                    const auto answer = OnReceive(static_cast<size_t>(bytesReceived));
+                    if (answer) {
+                        SendAnswer(*answer);
+                    }
                 }
             } catch (Poco::Net::ConnectionResetException&) {
                 Log().Warn() << "Admin connection was resetted";
-                isOpen = false;
+                IsOpen = false;
             } catch (Poco::Exception& ex) {
                 Log().Error() << "Admin connection closed due to error: " << ex.what();
-                isOpen = false;
+                IsOpen = false;
             }
         }
     }
@@ -146,28 +149,48 @@ private:
 
     StreamSocket& Socket;
     ConnectionContext& Ctx;
-    char Buffer[RECEIVE_BYTES_MAX];
+    char ReceiveBuffer[RECEIVE_BYTES_MAX];
+    bool IsOpen = true;
     bool StopOnConnectionClose = false;
 
 private:
     int ReceiveBytes() {
-        return Socket.receiveBytes(Buffer, RECEIVE_BYTES_MAX);
+        return Socket.receiveBytes(ReceiveBuffer, RECEIVE_BYTES_MAX);
     }
 
-    std::string_view GetCommand(size_t amountBytes) {
+    void SendAnswer(const String& answer) {
+        if (answer.size() == 0) {
+            return;
+        }
+
+        const size_t bytesToSend = answer.size() + 1;
+        int bytesSent = Socket.sendBytes(answer.c_str(), bytesToSend);
+        if (bytesSent < 0) {
+            Log().Error() << "AdminServer is in unknown state: " << bytesSent;
+        }
+
+        if (static_cast<size_t>(bytesSent) < bytesToSend) {
+            Log().Error() << "AdminServer was sending " << bytesToSend
+                          << " bytes but it is able to send only " << bytesSent;
+        }
+    }
+
+    StringView GetCommand(size_t amountBytes) {
         if (amountBytes >= RECEIVE_BYTES_MAX) {
             amountBytes = RECEIVE_BYTES_MAX;
         }
-        return {Buffer, amountBytes};
+        return {ReceiveBuffer, amountBytes};
     }
 
-    void OnReceive(size_t amountBytes) {
-        auto command = GetCommand(amountBytes);
-        if (command == "STOP\r\n") {
+    Maybe<String> OnReceive(size_t amountBytes) {
+        auto command = Strip(GetCommand(amountBytes));
+        if (command == "STOP") {
             StopOnConnectionClose = true;
+            IsOpen = false;
+            return Nothing<String>();
         }
-        Log().Debug() << "New admin command: " << command;
-        Log().Debug() << static_cast<size_t>(Buffer[amountBytes - 2]);
+
+        return "Unknown command\n";
     }
 };
 
@@ -212,7 +235,7 @@ private:
     void Shutdown() {
         Server.stop();
         for (auto* listener : TerminationListeners) {
-            listener->OnTermination();
+            listener->OnTerminate();
         }
         TerminationListeners.clear();
     }
